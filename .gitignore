@@ -1,0 +1,6 @@
+credentials.local.json
+python/
+python-*-embed-amd64.zip
+get-pip.py
+__pycache__/
+*.pyc
