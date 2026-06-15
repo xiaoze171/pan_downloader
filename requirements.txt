@@ -1,2 +1,4 @@
 requests>=2.31.0
 tqdm>=4.66.0
+flet>=0.28.0
+flet-desktop>=0.28.0

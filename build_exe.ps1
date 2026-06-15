@@ -6,6 +6,16 @@ Set-Location $ProjectRoot
 $BuildPath = Join-Path $ProjectRoot "build"
 $DistPath = Join-Path $ProjectRoot "dist"
 $SpecPath = Join-Path $ProjectRoot "BaiduPanDownloader.spec"
+$DistCredentialsPath = Join-Path $DistPath "credentials.local.json"
+$RootCredentialsPath = Join-Path $ProjectRoot "credentials.local.json"
+$SavedCredentialsJson = $null
+foreach ($CredentialsPath in @($DistCredentialsPath, $RootCredentialsPath)) {
+    if (Test-Path -LiteralPath $CredentialsPath) {
+        $SavedCredentialsJson = [System.IO.File]::ReadAllText($CredentialsPath).TrimStart([char]0xFEFF)
+        break
+    }
+}
+
 foreach ($Path in @($BuildPath, $DistPath, $SpecPath)) {
     if ((Test-Path -LiteralPath $Path) -and ((Resolve-Path -LiteralPath $Path).Path.StartsWith($ProjectRoot))) {
         Remove-Item -LiteralPath $Path -Recurse -Force
@@ -17,6 +27,15 @@ if (-not (Test-Path -LiteralPath (Join-Path $BuildDeps "PyInstaller"))) {
     & .\bin\py.cmd -m pip install --target $BuildDeps pyinstaller
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to install PyInstaller"
+    }
+}
+if (
+    (-not (Test-Path -LiteralPath (Join-Path $BuildDeps "flet"))) -or
+    (-not (Test-Path -LiteralPath (Join-Path $BuildDeps "flet_desktop")))
+) {
+    & .\bin\py.cmd -m pip install --target $BuildDeps -r .\requirements.txt
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install build dependencies"
     }
 }
 if (Test-Path -LiteralPath $BuildDeps) {
@@ -32,6 +51,9 @@ $env:MPLCONFIGDIR = Join-Path $ProjectRoot "build\mplconfig"
     --onefile `
     --windowed `
     --name BaiduPanDownloader `
+    --collect-all flet `
+    --collect-all flet_desktop `
+    --hidden-import flet_desktop `
     --exclude-module IPython `
     --exclude-module PIL `
     --exclude-module astroid `
@@ -60,4 +82,16 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller failed with exit code $LASTEXITCODE"
 }
 
+if ([string]::IsNullOrWhiteSpace($SavedCredentialsJson)) {
+    $EmptyCredentials = [ordered]@{
+        BDUSS = ""
+        STOKEN = ""
+    }
+    $SavedCredentialsJson = $EmptyCredentials | ConvertTo-Json
+}
+$CredentialsJson = $SavedCredentialsJson.TrimStart([char]0xFEFF).TrimEnd() + [Environment]::NewLine
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($DistCredentialsPath, $CredentialsJson, $Utf8NoBom)
+
 Write-Output "Built: $(Join-Path $ProjectRoot 'dist\BaiduPanDownloader.exe')"
+Write-Output "Config: $DistCredentialsPath"
