@@ -2429,7 +2429,7 @@ class FletPanDownloaderApp:
         ft = self.ft
         self.page.title = "百度网盘分享下载"
         self.page.padding = 0
-        self.page.bgcolor = "#f4f6f9"
+        self.page.bgcolor = "#f5f7fb"
         self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.scroll = ft.ScrollMode.HIDDEN
         self.page.on_close = lambda _e: self.on_close()
@@ -2446,65 +2446,47 @@ class FletPanDownloaderApp:
 
     def build_ui(self) -> None:
         ft = self.ft
-        page_bg = "#f4f6f9"
-        panel_bg = "#ffffff"
-        sub_panel_bg = "#f8fafc"
-        border_color = "#d8e0ea"
-        primary = "#2563eb"
-        text_color = "#111827"
-        muted_color = "#64748b"
-        label_color = "#475569"
-        panel_radius = 8
-        field_radius = 8
-
-        def panel_border():
-            return ft.Border(
-                left=ft.BorderSide(width=1, color=border_color),
-                top=ft.BorderSide(width=1, color=border_color),
-                right=ft.BorderSide(width=1, color=border_color),
-                bottom=ft.BorderSide(width=1, color=border_color),
-            )
 
         self.status_text = ft.Text("未登录" if not BDUSS else "已登录", size=13, weight=ft.FontWeight.BOLD, color="#1d4ed8")
-        self.summary_text = ft.Text("等待解析分享", size=13, color=muted_color, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+        self.summary_text = ft.Text("等待解析分享", size=13, color="#64748b", max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
         self.total_speed_text = ft.Text("总速度 -", size=13, weight=ft.FontWeight.BOLD, color="#334155")
-        self.overall_progress = ft.ProgressBar(value=0, height=8, color=primary, bgcolor="#e2e8f0")
+        self.overall_progress = ft.ProgressBar(value=0, height=8, color="#2563eb", bgcolor="#e2e8f0")
 
         self.share_url_field = ft.TextField(
             label="分享文本",
             hint_text="粘贴百度网盘分享链接或完整分享文本",
             expand=True,
-            border_radius=field_radius,
+            border_radius=10,
             prefix_icon=ft.Icons.LINK,
             filled=True,
-            bgcolor=panel_bg,
+            bgcolor="#ffffff",
         )
         self.download_root_field = ft.TextField(
             label="保存位置",
             value=DOWNLOAD_ROOT,
             expand=True,
-            border_radius=field_radius,
+            border_radius=10,
             prefix_icon=ft.Icons.FOLDER_OPEN,
             filled=True,
-            bgcolor=panel_bg,
+            bgcolor="#ffffff",
         )
         self.file_workers_field = ft.TextField(
             label="文件并发",
             value=str(MAX_WORKERS),
             width=96,
-            border_radius=field_radius,
+            border_radius=10,
             text_align=ft.TextAlign.CENTER,
             filled=True,
-            bgcolor=panel_bg,
+            bgcolor="#ffffff",
         )
         self.part_workers_field = ft.TextField(
             label="单文件线程",
             value=str(DOWNLOAD_PART_WORKERS),
             width=112,
-            border_radius=field_radius,
+            border_radius=10,
             text_align=ft.TextAlign.CENTER,
             filled=True,
-            bgcolor=panel_bg,
+            bgcolor="#ffffff",
         )
 
         self.login_button = ft.OutlinedButton("登录 / 刷新", icon=ft.Icons.LOGIN, on_click=lambda _e: self.login())
@@ -2520,14 +2502,14 @@ class FletPanDownloaderApp:
         self.selection_buttons = [self.select_all_button, self.clear_selection_button, self.invert_selection_button]
 
         header = ft.Container(
-            padding=ft.Padding(left=24, top=16, right=24, bottom=16),
-            bgcolor=panel_bg,
-            border=ft.Border(bottom=ft.BorderSide(width=1, color=border_color)),
+            padding=ft.Padding(left=26, top=20, right=26, bottom=20),
+            bgcolor="#ffffff",
+            border=ft.Border(bottom=ft.BorderSide(width=1, color="#e2e8f0")),
             content=ft.Row(
                 [
                     ft.Column(
                         [
-                            ft.Text("百度网盘分享下载", size=22, weight=ft.FontWeight.BOLD, color=text_color),
+                            ft.Text("百度网盘分享下载", size=24, weight=ft.FontWeight.BOLD, color="#111827"),
                             self.summary_text,
                         ],
                         spacing=4,
@@ -2546,10 +2528,15 @@ class FletPanDownloaderApp:
         )
 
         controls_panel = ft.Container(
-            bgcolor=panel_bg,
-            border_radius=panel_radius,
-            padding=16,
-            border=panel_border(),
+            bgcolor="#ffffff",
+            border_radius=14,
+            padding=18,
+            border=ft.Border(
+                left=ft.BorderSide(width=1, color="#e2e8f0"),
+                top=ft.BorderSide(width=1, color="#e2e8f0"),
+                right=ft.BorderSide(width=1, color="#e2e8f0"),
+                bottom=ft.BorderSide(width=1, color="#e2e8f0"),
+            ),
             content=ft.Column(
                 [
                     ft.Row([self.share_url_field], spacing=12),
@@ -2582,7 +2569,7 @@ class FletPanDownloaderApp:
                     ft.Text(
                         "暂停或重新选择会停止当前连接；未完成的 .parts 分片会保留，继续下载会自动续传。",
                         size=12,
-                        color=muted_color,
+                        color="#64748b",
                     ),
                 ],
                 spacing=12,
@@ -2591,26 +2578,31 @@ class FletPanDownloaderApp:
 
         self.file_list = ft.ListView(expand=True, spacing=0, padding=0, auto_scroll=False)
         files_header = ft.Container(
-            bgcolor=sub_panel_bg,
-            border=ft.Border(bottom=ft.BorderSide(width=1, color=border_color)),
+            bgcolor="#f8fafc",
+            border=ft.Border(bottom=ft.BorderSide(width=1, color="#e2e8f0")),
             padding=ft.Padding(left=12, top=10, right=12, bottom=10),
             content=ft.Row(
                 [
                     ft.Text("", width=34),
-                    ft.Text("路径", expand=True, size=12, weight=ft.FontWeight.BOLD, color=label_color),
-                    ft.Text("大小", width=95, size=12, weight=ft.FontWeight.BOLD, color=label_color, text_align=ft.TextAlign.RIGHT),
-                    ft.Text("进度", width=190, size=12, weight=ft.FontWeight.BOLD, color=label_color, text_align=ft.TextAlign.CENTER),
-                    ft.Text("速度", width=105, size=12, weight=ft.FontWeight.BOLD, color=label_color, text_align=ft.TextAlign.RIGHT),
-                    ft.Text("状态", width=92, size=12, weight=ft.FontWeight.BOLD, color=label_color, text_align=ft.TextAlign.CENTER),
+                    ft.Text("路径", expand=True, size=12, weight=ft.FontWeight.BOLD, color="#475569"),
+                    ft.Text("大小", width=95, size=12, weight=ft.FontWeight.BOLD, color="#475569", text_align=ft.TextAlign.RIGHT),
+                    ft.Text("进度", width=190, size=12, weight=ft.FontWeight.BOLD, color="#475569", text_align=ft.TextAlign.CENTER),
+                    ft.Text("速度", width=105, size=12, weight=ft.FontWeight.BOLD, color="#475569", text_align=ft.TextAlign.RIGHT),
+                    ft.Text("状态", width=92, size=12, weight=ft.FontWeight.BOLD, color="#475569", text_align=ft.TextAlign.CENTER),
                 ],
                 spacing=12,
             ),
         )
         files_panel = ft.Container(
-            expand=True,
-            bgcolor=panel_bg,
-            border_radius=panel_radius,
-            border=panel_border(),
+            expand=7,
+            bgcolor="#ffffff",
+            border_radius=14,
+            border=ft.Border(
+                left=ft.BorderSide(width=1, color="#e2e8f0"),
+                top=ft.BorderSide(width=1, color="#e2e8f0"),
+                right=ft.BorderSide(width=1, color="#e2e8f0"),
+                bottom=ft.BorderSide(width=1, color="#e2e8f0"),
+            ),
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             content=ft.Column(
                 [
@@ -2618,7 +2610,7 @@ class FletPanDownloaderApp:
                         padding=ft.Padding(left=16, top=14, right=12, bottom=10),
                         content=ft.Row(
                             [
-                                ft.Text("文件列表", size=16, weight=ft.FontWeight.BOLD, color=text_color, expand=True),
+                                ft.Text("文件列表", size=16, weight=ft.FontWeight.BOLD, color="#111827", expand=True),
                                 self.select_all_button,
                                 self.clear_selection_button,
                                 self.invert_selection_button,
@@ -2637,21 +2629,26 @@ class FletPanDownloaderApp:
 
         self.log_list = ft.ListView(expand=True, spacing=6, padding=12, auto_scroll=True)
         log_panel = ft.Container(
-            width=420,
-            bgcolor=panel_bg,
-            border_radius=panel_radius,
-            border=panel_border(),
+            width=400,
+            bgcolor="#ffffff",
+            border_radius=14,
+            border=ft.Border(
+                left=ft.BorderSide(width=1, color="#e2e8f0"),
+                top=ft.BorderSide(width=1, color="#e2e8f0"),
+                right=ft.BorderSide(width=1, color="#e2e8f0"),
+                bottom=ft.BorderSide(width=1, color="#e2e8f0"),
+            ),
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             content=ft.Column(
                 [
                     ft.Container(
-                        bgcolor=sub_panel_bg,
-                        border=ft.Border(bottom=ft.BorderSide(width=1, color=border_color)),
+                        bgcolor="#f8fafc",
+                        border=ft.Border(bottom=ft.BorderSide(width=1, color="#e2e8f0")),
                         padding=ft.Padding(left=16, top=14, right=16, bottom=14),
                         content=ft.Row(
                             [
-                                ft.Icon(ft.Icons.TERMINAL, color=primary, size=18),
-                                ft.Text("任务日志", size=16, weight=ft.FontWeight.BOLD, color=text_color),
+                                ft.Icon(ft.Icons.TERMINAL, color="#2563eb", size=18),
+                                ft.Text("任务日志", size=16, weight=ft.FontWeight.BOLD, color="#111827"),
                             ],
                             spacing=8,
                         ),
@@ -2664,9 +2661,9 @@ class FletPanDownloaderApp:
         )
 
         footer = ft.Container(
-            bgcolor=panel_bg,
-            border=ft.Border(top=ft.BorderSide(width=1, color=border_color)),
-            padding=ft.Padding(left=24, top=12, right=24, bottom=14),
+            bgcolor="#ffffff",
+            border=ft.Border(top=ft.BorderSide(width=1, color="#e2e8f0")),
+            padding=ft.Padding(left=26, top=12, right=26, bottom=14),
             content=ft.Row(
                 [
                     ft.Text("总进度", size=13, weight=ft.FontWeight.BOLD, color="#334155"),
@@ -2678,25 +2675,18 @@ class FletPanDownloaderApp:
             ),
         )
 
-        main_panel = ft.Column(
-            [
-                controls_panel,
-                files_panel,
-            ],
-            expand=True,
-            spacing=14,
-        )
-        content_area = ft.Row(
-            [main_panel, log_panel],
-            expand=True,
-            spacing=14,
-            vertical_alignment=ft.CrossAxisAlignment.STRETCH,
-        )
+        content_area = ft.Row([files_panel, log_panel], expand=True, spacing=14)
         body = ft.Container(
             expand=True,
-            bgcolor=page_bg,
             padding=ft.Padding(left=22, top=18, right=22, bottom=14),
-            content=content_area,
+            content=ft.Column(
+                [
+                    controls_panel,
+                    content_area,
+                ],
+                expand=True,
+                spacing=14,
+            ),
         )
 
         self.page.add(ft.Column([header, body, footer], expand=True, spacing=0))
