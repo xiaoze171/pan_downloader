@@ -16,11 +16,22 @@ function Convert-SecureStringToPlainText {
 }
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$PythonExe = Join-Path $ProjectRoot "python\python.exe"
+$PortablePythonExe = Join-Path $ProjectRoot "python\python.exe"
+$LocalPythonExe = "D:\app\conda\python.exe"
 $ScriptPath = Join-Path $ProjectRoot "baidu_pan_downloader.py"
 
-if (-not (Test-Path $PythonExe)) {
-    throw "未找到便携 Python: $PythonExe。请先运行 setup_portable_python.ps1。"
+if (Test-Path $PortablePythonExe) {
+    $PythonExe = $PortablePythonExe
+}
+elseif (Test-Path $LocalPythonExe) {
+    $PythonExe = $LocalPythonExe
+}
+else {
+    $PythonCommand = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $PythonCommand) {
+        throw "Python was not found. Install Python or run setup_portable_python.ps1 first."
+    }
+    $PythonExe = $PythonCommand.Source
 }
 
 $bdussSecure = Read-Host "BAIDU_BDUSS" -AsSecureString

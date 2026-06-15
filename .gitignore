@@ -4,3 +4,7 @@ python-*-embed-amd64.zip
 get-pip.py
 __pycache__/
 *.pyc
+.build_deps/
+build/
+dist/
+*.spec
