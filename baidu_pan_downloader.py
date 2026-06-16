@@ -8,6 +8,7 @@ import shutil
 import socket
 import struct
 import queue
+import asyncio
 import threading
 import subprocess
 import tempfile
@@ -2417,8 +2418,11 @@ class FletPanDownloaderApp:
         self.download_stop_reason = ""
         self.closing = False
         self.exit_timer_started = False
+        self.force_exit_timer = None
+        self.queue_task = None
         self.busy = False
         self.queue_running = True
+        self.last_progress_update_time = 0.0
 
         self.configure_page()
         self.build_ui()
@@ -2427,18 +2431,20 @@ class FletPanDownloaderApp:
 
     def configure_page(self) -> None:
         ft = self.ft
-        self.page.title = "百度网盘分享下载"
+        self.page.title = "轻云链"
         self.page.padding = 0
         self.page.bgcolor = "#f5f7fb"
         self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.scroll = ft.ScrollMode.HIDDEN
-        self.page.on_close = lambda _e: self.on_close()
-        self.page.on_disconnect = lambda _e: self.on_close()
+        self.page.on_resize = lambda event: self.update_responsive_layout(getattr(event, "height", None))
+        self.page.on_close = None
+        self.page.on_disconnect = None
         try:
             self.page.window.width = 1380
-            self.page.window.height = 860
+            self.page.window.height = 780
             self.page.window.min_width = 1180
-            self.page.window.min_height = 720
+            self.page.window.min_height = 640
+            self.page.window.maximized = True
             self.page.window.prevent_close = False
             self.page.window.on_event = self.on_window_event
         except Exception:
@@ -2489,11 +2495,12 @@ class FletPanDownloaderApp:
             bgcolor="#ffffff",
         )
 
+        PrimaryButton = ft.Button if hasattr(ft, "Button") else ft.ElevatedButton
         self.login_button = ft.OutlinedButton("登录 / 刷新", icon=ft.Icons.LOGIN, on_click=lambda _e: self.login())
-        self.parse_button = ft.ElevatedButton("解析文件", icon=ft.Icons.SEARCH, on_click=lambda _e: self.parse_share())
-        self.download_button = ft.ElevatedButton("开始下载", icon=ft.Icons.DOWNLOAD, on_click=lambda _e: self.download(), disabled=True)
+        self.parse_button = PrimaryButton("解析文件", icon=ft.Icons.SEARCH, on_click=lambda _e: self.parse_share())
+        self.download_button = PrimaryButton("开始下载", icon=ft.Icons.DOWNLOAD, on_click=lambda _e: self.download(), disabled=True)
         self.pause_button = ft.OutlinedButton("暂停", icon=ft.Icons.PAUSE, on_click=lambda _e: self.pause_download(), disabled=True)
-        self.resume_button = ft.ElevatedButton("继续", icon=ft.Icons.PLAY_ARROW, on_click=lambda _e: self.resume_download(), disabled=True)
+        self.resume_button = PrimaryButton("继续", icon=ft.Icons.PLAY_ARROW, on_click=lambda _e: self.resume_download(), disabled=True)
         self.reselect_button = ft.OutlinedButton("重新选择", icon=ft.Icons.RESTART_ALT, on_click=lambda _e: self.reselect_download(), disabled=True)
 
         self.select_all_button = ft.TextButton("全选", icon=ft.Icons.SELECT_ALL, on_click=lambda _e: self.select_all_files(), disabled=True)
@@ -2509,7 +2516,7 @@ class FletPanDownloaderApp:
                 [
                     ft.Column(
                         [
-                            ft.Text("百度网盘分享下载", size=24, weight=ft.FontWeight.BOLD, color="#111827"),
+                            ft.Text("轻云链", size=24, weight=ft.FontWeight.BOLD, color="#111827"),
                             self.summary_text,
                         ],
                         spacing=4,
@@ -2576,7 +2583,21 @@ class FletPanDownloaderApp:
             ),
         )
 
-        self.file_list = ft.ListView(expand=True, spacing=0, padding=0, auto_scroll=False)
+        content_area_height, file_list_height, log_list_height = self.calculate_content_heights()
+
+        self.file_list = ft.ListView(
+            spacing=0,
+            padding=0,
+            auto_scroll=False,
+            scroll=ft.ScrollMode.ALWAYS,
+            height=file_list_height,
+            build_controls_on_demand=False,
+        )
+        file_list_viewport = ft.Container(
+            content=self.file_list,
+            height=file_list_height,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+        )
         files_header = ft.Container(
             bgcolor="#f8fafc",
             border=ft.Border(bottom=ft.BorderSide(width=1, color="#e2e8f0")),
@@ -2595,6 +2616,7 @@ class FletPanDownloaderApp:
         )
         files_panel = ft.Container(
             expand=7,
+            height=content_area_height,
             bgcolor="#ffffff",
             border_radius=14,
             border=ft.Border(
@@ -2620,16 +2642,29 @@ class FletPanDownloaderApp:
                         ),
                     ),
                     files_header,
-                    self.file_list,
+                    file_list_viewport,
                 ],
                 spacing=0,
                 expand=True,
             ),
         )
 
-        self.log_list = ft.ListView(expand=True, spacing=6, padding=12, auto_scroll=True)
+        self.log_list = ft.ListView(
+            spacing=6,
+            padding=12,
+            auto_scroll=True,
+            scroll=ft.ScrollMode.ALWAYS,
+            height=log_list_height,
+            build_controls_on_demand=False,
+        )
+        log_list_viewport = ft.Container(
+            content=self.log_list,
+            height=log_list_height,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+        )
         log_panel = ft.Container(
             width=400,
+            height=content_area_height,
             bgcolor="#ffffff",
             border_radius=14,
             border=ft.Border(
@@ -2653,7 +2688,7 @@ class FletPanDownloaderApp:
                             spacing=8,
                         ),
                     ),
-                    self.log_list,
+                    log_list_viewport,
                 ],
                 spacing=0,
                 expand=True,
@@ -2675,7 +2710,20 @@ class FletPanDownloaderApp:
             ),
         )
 
-        content_area = ft.Row([files_panel, log_panel], expand=True, spacing=14)
+        content_area = ft.Container(
+            height=content_area_height,
+            content=ft.Row(
+                [files_panel, log_panel],
+                expand=True,
+                spacing=14,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            ),
+        )
+        self.content_area_container = content_area
+        self.files_panel = files_panel
+        self.log_panel = log_panel
+        self.file_list_viewport = file_list_viewport
+        self.log_list_viewport = log_list_viewport
         body = ft.Container(
             expand=True,
             padding=ft.Padding(left=22, top=18, right=22, bottom=14),
@@ -2690,29 +2738,101 @@ class FletPanDownloaderApp:
         )
 
         self.page.add(ft.Column([header, body, footer], expand=True, spacing=0))
+        self.update_responsive_layout()
         self.update_download_button_state()
         self.safe_update()
 
+    def calculate_content_heights(self, page_height: Optional[float] = None) -> Tuple[int, int, int]:
+        try:
+            height = int(page_height or getattr(self.page, "height", 0) or getattr(self.page.window, "height", 780) or 780)
+        except Exception:
+            height = 780
+        content_area_height = max(350, height - 410)
+        file_list_height = max(300, content_area_height - 98)
+        log_list_height = max(320, content_area_height - 56)
+        return content_area_height, file_list_height, log_list_height
+
+    def update_responsive_layout(self, page_height: Optional[float] = None) -> None:
+        required_controls = ("content_area_container", "files_panel", "log_panel", "file_list_viewport", "log_list_viewport")
+        if not all(hasattr(self, name) for name in required_controls):
+            return
+        content_area_height, file_list_height, log_list_height = self.calculate_content_heights(page_height)
+        self.content_area_container.height = content_area_height
+        self.files_panel.height = content_area_height
+        self.log_panel.height = content_area_height
+        self.file_list.height = file_list_height
+        self.file_list_viewport.height = file_list_height
+        self.log_list.height = log_list_height
+        self.log_list_viewport.height = log_list_height
+        self.safe_update()
+
     def start_queue_pump(self) -> None:
-        if hasattr(self.page, "run_thread"):
+        if hasattr(self.page, "run_task"):
+            self.queue_task = self.page.run_task(self.process_queue_loop_async)
+        elif hasattr(self.page, "run_thread"):
             self.page.run_thread(self.process_queue_loop)
         else:
             threading.Thread(target=self.process_queue_loop, daemon=True).start()
 
+    async def process_queue_loop_async(self) -> None:
+        while self.queue_running:
+            self.process_queue_batch()
+            await asyncio.sleep(0.1)
+
+    def process_queue_batch(self) -> None:
+        changed = False
+        processed = 0
+        deadline = time.monotonic() + 0.05
+        while True:
+            if processed >= 100 or time.monotonic() >= deadline:
+                break
+            try:
+                event = self.ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            self.process_event(event)
+            changed = True
+            processed += 1
+            if event[0] == "files":
+                self.safe_update()
+                changed = False
+                break
+            if event[0] in ("log", "status", "summary", "error"):
+                self.safe_update()
+                changed = False
+        if changed:
+            self.safe_update()
+
     def on_window_event(self, event) -> None:
-        if getattr(event, "data", "") == "close":
+        event_type = getattr(event, "type", None)
+        close_type = getattr(getattr(self.ft, "WindowEventType", object), "CLOSE", None)
+        if event_type == close_type or getattr(event_type, "value", None) == "close" or getattr(event, "data", "") == "close":
             self.on_close()
 
+    def force_exit_after_close(self) -> None:
+        os._exit(0)
+
     def on_close(self) -> None:
+        if self.closing:
+            return
         self.closing = True
         self.queue_running = False
         self.cancel_event.set()
+        if self.queue_task:
+            try:
+                self.queue_task.cancel()
+            except Exception:
+                pass
 
     def safe_update(self) -> None:
         try:
             self.page.update()
         except Exception:
-            pass
+            try:
+                if hasattr(self.page, "schedule_update"):
+                    self.page.schedule_update()
+            except Exception:
+                pass
 
     def show_snack(self, message: str) -> None:
         ft = self.ft
@@ -2751,6 +2871,7 @@ class FletPanDownloaderApp:
             self.append_log("[配置] 已读取 BDUSS。")
         else:
             self.append_log("[配置] 未读取到 BDUSS，解析前会打开网页登录。")
+        self.safe_update()
 
     def normalize_log_entry(self, text: str) -> Tuple[str, str]:
         message = str(text or "").strip()
@@ -2812,8 +2933,14 @@ class FletPanDownloaderApp:
         timestamp = time.strftime("%H:%M:%S")
         self.log_list.controls.append(
             ft.Container(
-                bgcolor="#111827",
+                bgcolor="#ffffff",
                 border_radius=8,
+                border=ft.Border(
+                    left=ft.BorderSide(width=1, color="#e2e8f0"),
+                    top=ft.BorderSide(width=1, color="#e2e8f0"),
+                    right=ft.BorderSide(width=1, color="#e2e8f0"),
+                    bottom=ft.BorderSide(width=1, color="#e2e8f0"),
+                ),
                 padding=ft.Padding(left=10, top=7, right=10, bottom=7),
                 content=ft.Row(
                     [
@@ -2825,7 +2952,7 @@ class FletPanDownloaderApp:
                             padding=ft.Padding(left=6, top=2, right=6, bottom=2),
                             content=ft.Text(level, size=10, weight=ft.FontWeight.BOLD, color=badge_fg, text_align=ft.TextAlign.CENTER),
                         ),
-                        ft.Text(message, expand=True, size=12, color="#e5e7eb", selectable=True),
+                        ft.Text(message, expand=True, size=12, color="#334155", selectable=True),
                     ],
                     spacing=8,
                     vertical_alignment=ft.CrossAxisAlignment.START,
@@ -3009,6 +3136,10 @@ class FletPanDownloaderApp:
         self.download_stop_reason = ""
         self.cancel_event.clear()
         self.file_list.controls.clear()
+        total_files = len(files)
+        if total_files:
+            self.summary_text.value = f"正在显示文件列表 0/{total_files}"
+            self.safe_update()
         for index, file_info in enumerate(files):
             path = file_info["path"]
             size = int(file_info.get("size") or 0)
@@ -3019,6 +3150,9 @@ class FletPanDownloaderApp:
             self.file_progress_bytes[path] = 0
             self.file_total_bytes[path] = size
             self.file_speed_bytes[path] = 0.0
+            if (index + 1) % 100 == 0:
+                self.summary_text.value = f"正在显示文件列表 {index + 1}/{total_files}"
+                self.safe_update()
         self.update_selection_summary()
         self.total_speed_text.value = "总速度 -"
         self.overall_progress.value = 0
@@ -3143,16 +3277,7 @@ class FletPanDownloaderApp:
 
     def process_queue_loop(self) -> None:
         while self.queue_running:
-            changed = False
-            while True:
-                try:
-                    event = self.ui_queue.get_nowait()
-                except queue.Empty:
-                    break
-                self.process_event(event)
-                changed = True
-            if changed:
-                self.safe_update()
+            self.process_queue_batch()
             time.sleep(0.1)
 
     def process_event(self, event) -> None:
@@ -3170,6 +3295,10 @@ class FletPanDownloaderApp:
             self.overall_progress.value = max(0.0, min(1.0, float(event[1]) / 100.0))
         elif kind == "file_progress":
             self.update_file_progress(event[1], event[2], event[3], event[4], event[5])
+            now = time.monotonic()
+            if now - self.last_progress_update_time >= 0.25:
+                self.last_progress_update_time = now
+                self.safe_update()
         elif kind == "file_status":
             self.set_file_status(event[1], event[2], event[3] if len(event) > 3 else 0.0)
         elif kind == "download_dir":
@@ -3415,9 +3544,13 @@ class BaiduPanDownloaderApp:
         self.busy = False
 
         self.root = tk.Tk()
-        self.root.title("百度网盘分享下载")
-        self.root.geometry("1380x860")
-        self.root.minsize(1180, 720)
+        self.root.title("轻云链")
+        self.root.geometry("1380x780")
+        self.root.minsize(1180, 640)
+        try:
+            self.root.state("zoomed")
+        except Exception:
+            pass
         self.root.configure(bg="#f4f6f8")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -3476,7 +3609,7 @@ class BaiduPanDownloaderApp:
         header.grid(row=0, column=0, sticky="ew", pady=(0, 16))
         header.columnconfigure(0, weight=1)
         header.columnconfigure(1, weight=1)
-        ttk.Label(header, text="百度网盘分享下载", style="Header.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text="轻云链", style="Header.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(header, textvariable=self.summary_var, style="Subtle.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
         ttk.Label(header, textvariable=self.status_var, style="Status.TLabel").grid(row=0, column=2, rowspan=2, sticky="e")
 
@@ -3594,9 +3727,9 @@ class BaiduPanDownloaderApp:
             log_panel,
             height=12,
             wrap="word",
-            bg="#111827",
-            fg="#e5e7eb",
-            insertbackground="#e5e7eb",
+            bg="#ffffff",
+            fg="#334155",
+            insertbackground="#334155",
             relief="flat",
             padx=12,
             pady=10,
@@ -4193,7 +4326,14 @@ def launch_tk_gui() -> None:
     app.run()
 
 
+def ensure_local_dependency_path() -> None:
+    deps_dir = os.path.join(SCRIPT_DIR, ".build_deps")
+    if os.path.isdir(deps_dir) and deps_dir not in sys.path:
+        sys.path.insert(0, deps_dir)
+
+
 def launch_gui() -> None:
+    ensure_local_dependency_path()
     try:
         import flet as ft
     except Exception as exc:
