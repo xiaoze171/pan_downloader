@@ -43,6 +43,31 @@ if (
         throw "Failed to install build dependencies"
     }
 }
+
+$FletDesktopPath = Join-Path $BuildDeps "flet_desktop"
+$FletDesktopAppPath = Join-Path $FletDesktopPath "app"
+$FletClientArchive = Join-Path $FletDesktopAppPath "flet-windows.zip"
+$FletVersionPath = Join-Path $FletDesktopPath "version.py"
+$FletVersion = "0.85.3"
+if (Test-Path -LiteralPath $FletVersionPath) {
+    $VersionText = [System.IO.File]::ReadAllText($FletVersionPath)
+    if ($VersionText -match 'version\s*=\s*"([^"]+)"') {
+        $FletVersion = $Matches[1]
+    }
+}
+if (-not (Test-Path -LiteralPath $FletClientArchive)) {
+    $FletClientCache = Join-Path $HOME ".flet\client\flet-desktop-full-$FletVersion"
+    if (-not (Test-Path -LiteralPath (Join-Path $FletClientCache "flet\flet.exe"))) {
+        throw "Flet desktop client cache not found: $FletClientCache. Run the app once on a networked build machine, or place flet-windows.zip at $FletClientArchive before building."
+    }
+    New-Item -ItemType Directory -Force -Path $FletDesktopAppPath | Out-Null
+    $FletClientTempArchive = Join-Path $env:TEMP "flet-windows-$FletVersion.zip"
+    if (Test-Path -LiteralPath $FletClientTempArchive) {
+        Remove-Item -LiteralPath $FletClientTempArchive -Force
+    }
+    Compress-Archive -LiteralPath (Join-Path $FletClientCache "flet") -DestinationPath $FletClientTempArchive -Force
+    Move-Item -LiteralPath $FletClientTempArchive -Destination $FletClientArchive -Force
+}
 if (Test-Path -LiteralPath $BuildDeps) {
     $env:PYTHONPATH = "$BuildDeps;$env:PYTHONPATH"
 }
@@ -58,6 +83,7 @@ $env:MPLCONFIGDIR = Join-Path $ProjectRoot "build\mplconfig"
     --name BaiduPanDownloader `
     --collect-all flet `
     --collect-all flet_desktop `
+    --add-data "$FletClientArchive;flet_desktop/app" `
     --hidden-import flet_desktop `
     --exclude-module IPython `
     --exclude-module PIL `

@@ -100,6 +100,13 @@ Copy-Item .\credentials.local.example.json .\credentials.local.json
 .\dist\BaiduPanDownloader.exe
 ```
 
+窗口版默认优先尝试 Flet 界面。打包脚本会把 Flet 桌面 client 一起打进 EXE，复制到没有外网的新电脑后不需要再在线下载 Flet 资源。如果 Flet 仍启动失败，程序会自动切换到 Tkinter 界面。也可以强制使用 Tkinter：
+
+```powershell
+$env:BAIDU_GUI="tkinter"
+.\dist\BaiduPanDownloader.exe
+```
+
 使用系统 Python：
 
 ```powershell
@@ -152,6 +159,18 @@ D:\下载\baidu_download
 
 ```powershell
 .\build_exe.ps1
+```
+
+构建脚本会把本机缓存的 Flet 桌面 client 打包进 EXE，来源路径类似：
+
+```text
+%USERPROFILE%\.flet\client\flet-desktop-full-0.85.3
+```
+
+如果构建机没有这个缓存，先在有外网的机器上运行一次程序让 Flet 完成初始化，或者手动把 `flet-windows.zip` 放到：
+
+```text
+.build_deps\flet_desktop\app\flet-windows.zip
 ```
 
 输出文件：

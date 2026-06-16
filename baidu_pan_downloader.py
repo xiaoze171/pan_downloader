@@ -4625,6 +4625,11 @@ def ensure_local_dependency_path() -> None:
 
 
 def launch_gui() -> None:
+    gui_mode = (os.getenv("BAIDU_GUI") or "").strip().lower()
+    if gui_mode in ("tk", "tkinter"):
+        launch_tk_gui()
+        return
+
     ensure_local_dependency_path()
     try:
         import flet as ft
@@ -4636,10 +4641,14 @@ def launch_gui() -> None:
     def target(page):
         FletPanDownloaderApp(page, ft)
 
-    if hasattr(ft, "run"):
-        ft.run(target, view=ft.AppView.FLET_APP)
-    else:
-        ft.app(target=target)
+    try:
+        if hasattr(ft, "run"):
+            ft.run(target, view=ft.AppView.FLET_APP)
+        else:
+            ft.app(target=target)
+    except Exception as exc:
+        print(f"Flet 界面启动失败，切换到 Tkinter 界面: {exc}")
+        launch_tk_gui()
 
 
 def main():
