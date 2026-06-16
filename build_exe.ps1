@@ -16,9 +16,14 @@ foreach ($CredentialsPath in @($DistCredentialsPath, $RootCredentialsPath)) {
     }
 }
 
-foreach ($Path in @($BuildPath, $DistPath, $SpecPath)) {
+foreach ($Path in @($BuildPath, $SpecPath)) {
     if ((Test-Path -LiteralPath $Path) -and ((Resolve-Path -LiteralPath $Path).Path.StartsWith($ProjectRoot))) {
         Remove-Item -LiteralPath $Path -Recurse -Force
+    }
+}
+if (Test-Path -LiteralPath $DistPath) {
+    if ((Resolve-Path -LiteralPath $DistPath).Path.StartsWith($ProjectRoot)) {
+        Get-ChildItem -LiteralPath $DistPath -Force | Remove-Item -Recurse -Force
     }
 }
 

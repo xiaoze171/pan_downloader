@@ -4,8 +4,10 @@ import sys
 import json
 import time
 import base64
+import ctypes
 import shutil
 import socket
+import sqlite3
 import struct
 import queue
 import asyncio
@@ -68,13 +70,15 @@ DOWNLOAD_USE_ENV_PROXY = False
 BAIDU_API_USE_ENV_PROXY = False
 SHARE_REQUEST_TIMEOUT = (10, 30)
 SHARE_LIST_PAGE_SIZE = 1000
-CLOUD_SAVE_ROOT = "/baidu_pan_downloader"
+CLOUD_SAVE_ROOT = "/xiaoze/baidu_pan_downloader"
 TRANSFER_SEARCH_RETRIES = 6
 TRANSFER_SEARCH_DELAY = 2
 BAIDU_PAN_HOME_URL = "https://pan.baidu.com/disk/main#/index?category=all"
-BAIDU_LOGIN_URL = "https://passport.baidu.com/v2/?login&u=" + quote(BAIDU_PAN_HOME_URL, safe="")
+BAIDU_LOGIN_URL = BAIDU_PAN_HOME_URL
+BAIDU_PASSPORT_CENTER_URL = "https://passport.baidu.com/center"
 LOGIN_TIMEOUT_SECONDS = 10 * 60
 LOGIN_POLL_INTERVAL = 2
+LOGIN_STOKEN_GRACE_SECONDS = 45
 
 
 class NoRetryError(RuntimeError):
@@ -154,7 +158,7 @@ def load_credentials() -> Tuple[str, str]:
     return bduss, stoken
 
 
-def save_credentials(credentials: Dict[str, str]) -> None:
+def save_credentials(credentials: Dict[str, str], require_stoken: bool = False) -> None:
     data = {}
     for key in ("BDUSS", "STOKEN", "BAIDUID"):
         value = (credentials.get(key) or "").strip()
@@ -163,6 +167,8 @@ def save_credentials(credentials: Dict[str, str]) -> None:
 
     if not data.get("BDUSS"):
         raise RuntimeError("登录成功但没有获取到 BDUSS Cookie")
+    if require_stoken and not data.get("STOKEN"):
+        raise RuntimeError("登录成功但没有获取到 STOKEN Cookie，请确认弹出的百度网盘页面已经完成登录")
 
     os.makedirs(os.path.dirname(CREDENTIALS_FILE), exist_ok=True)
     with open(CREDENTIALS_FILE, "w", encoding="utf-8") as f:
@@ -223,7 +229,237 @@ def find_edge_executable() -> str:
     raise RuntimeError("未找到 Microsoft Edge。可以用 BAIDU_EDGE_PATH 指定 msedge.exe 路径")
 
 
-def wait_for_browser_debug(port: int, timeout: int = 15) -> None:
+def get_default_edge_user_data_dir() -> str:
+    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+    if not local_app_data:
+        return ""
+    return os.path.join(local_app_data, "Microsoft", "Edge", "User Data")
+
+
+def get_edge_source_profile_config() -> Tuple[str, str]:
+    user_data_dir = (os.getenv("BAIDU_EDGE_USER_DATA_DIR") or "").strip()
+    if not user_data_dir:
+        user_data_dir = get_default_edge_user_data_dir()
+    profile_name = normalize_edge_profile_name(os.getenv("BAIDU_EDGE_PROFILE") or "Default")
+    return user_data_dir, profile_name
+
+
+def should_use_temp_edge_profile() -> bool:
+    value = (os.getenv("BAIDU_EDGE_USE_TEMP_PROFILE") or "").strip().lower()
+    return value in ("1", "true", "yes", "on")
+
+
+def should_use_direct_edge_profile() -> bool:
+    value = (os.getenv("BAIDU_EDGE_DIRECT_PROFILE") or "").strip().lower()
+    return value in ("1", "true", "yes", "on")
+
+
+def normalize_edge_profile_name(profile_name: str) -> str:
+    profile_name = (profile_name or "Default").strip().strip('"') or "Default"
+    parts = profile_name.replace("\\", "/").split("/")
+    if os.path.isabs(profile_name) or any(part in ("", ".", "..") for part in parts):
+        return "Default"
+    return profile_name
+
+
+def copy_edge_profile_file(src_root: str, dst_root: str, relative_path: str) -> bool:
+    src = os.path.join(src_root, *relative_path.split("/"))
+    if not os.path.isfile(src):
+        return False
+    dst = os.path.join(dst_root, *relative_path.split("/"))
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy2(src, dst)
+    return True
+
+
+def create_seeded_edge_user_data_dir(source_user_data_dir: str, profile_name: str) -> Tuple[str, int]:
+    temp_dir = tempfile.mkdtemp(prefix="baidu_pan_login_")
+    copied_count = 0
+    try:
+        for relative_path in (
+            "Local State",
+            f"{profile_name}/Preferences",
+            f"{profile_name}/Secure Preferences",
+            f"{profile_name}/Network/Cookies",
+            f"{profile_name}/Network/Cookies-journal",
+            f"{profile_name}/Network/Cookies-wal",
+            f"{profile_name}/Network/Cookies-shm",
+            f"{profile_name}/Cookies",
+            f"{profile_name}/Cookies-journal",
+            f"{profile_name}/Cookies-wal",
+            f"{profile_name}/Cookies-shm",
+        ):
+            if copy_edge_profile_file(source_user_data_dir, temp_dir, relative_path):
+                copied_count += 1
+    except OSError:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+    return temp_dir, copied_count
+
+
+class DataBlob(ctypes.Structure):
+    _fields_ = [
+        ("cbData", ctypes.c_ulong),
+        ("pbData", ctypes.POINTER(ctypes.c_ubyte)),
+    ]
+
+
+def windows_crypt_unprotect_data(data: bytes) -> bytes:
+    if os.name != "nt" or not data:
+        return b""
+
+    input_buffer = ctypes.create_string_buffer(data, len(data))
+    input_blob = DataBlob(len(data), ctypes.cast(input_buffer, ctypes.POINTER(ctypes.c_ubyte)))
+    output_blob = DataBlob()
+    crypt32 = ctypes.windll.crypt32
+    kernel32 = ctypes.windll.kernel32
+    if not crypt32.CryptUnprotectData(
+        ctypes.byref(input_blob),
+        None,
+        None,
+        None,
+        None,
+        0,
+        ctypes.byref(output_blob),
+    ):
+        raise OSError(ctypes.get_last_error(), "CryptUnprotectData failed")
+    try:
+        return ctypes.string_at(output_blob.pbData, output_blob.cbData)
+    finally:
+        kernel32.LocalFree(output_blob.pbData)
+
+
+def get_edge_cookie_encryption_key(user_data_dir: str) -> bytes:
+    local_state_path = os.path.join(user_data_dir, "Local State")
+    if not os.path.isfile(local_state_path):
+        return b""
+    with open(local_state_path, "r", encoding="utf-8") as f:
+        local_state = json.load(f)
+    encrypted_key = ((local_state.get("os_crypt") or {}).get("encrypted_key") or "").strip()
+    if not encrypted_key:
+        return b""
+    key_data = base64.b64decode(encrypted_key)
+    if key_data.startswith(b"DPAPI"):
+        key_data = key_data[5:]
+    return windows_crypt_unprotect_data(key_data)
+
+
+def decrypt_edge_cookie_value(value: Any, encrypted_value: Any, key: bytes) -> str:
+    if value:
+        return str(value)
+    if not encrypted_value:
+        return ""
+
+    encrypted_bytes = bytes(encrypted_value)
+    try:
+        if encrypted_bytes.startswith((b"v10", b"v11", b"v20")) and key:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+            nonce = encrypted_bytes[3:15]
+            payload = encrypted_bytes[15:]
+            return AESGCM(key).decrypt(nonce, payload, None).decode("utf-8", "ignore")
+        return windows_crypt_unprotect_data(encrypted_bytes).decode("utf-8", "ignore")
+    except Exception:
+        return ""
+
+
+def copy_cookie_database(profile_dir: str, cookie_db_path: str) -> Tuple[str, str]:
+    temp_dir = tempfile.mkdtemp(prefix="baidu_pan_cookie_")
+    copied_db = os.path.join(temp_dir, "Cookies")
+    shutil.copy2(cookie_db_path, copied_db)
+    for suffix in ("-wal", "-shm", "-journal"):
+        sidecar = cookie_db_path + suffix
+        if os.path.isfile(sidecar):
+            shutil.copy2(sidecar, copied_db + suffix)
+    return temp_dir, copied_db
+
+
+def read_edge_profile_cookies(user_data_dir: str, profile_name: str) -> List[Dict]:
+    if os.name != "nt":
+        return []
+    profile_dir = os.path.join(user_data_dir, profile_name)
+    if not os.path.isdir(profile_dir):
+        return []
+
+    key = get_edge_cookie_encryption_key(user_data_dir)
+    cookies = []
+    for relative_path in (os.path.join("Network", "Cookies"), "Cookies"):
+        cookie_db_path = os.path.join(profile_dir, relative_path)
+        if not os.path.isfile(cookie_db_path):
+            continue
+        temp_dir = ""
+        try:
+            temp_dir, copied_db = copy_cookie_database(profile_dir, cookie_db_path)
+            with sqlite3.connect(copied_db) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT host_key, name, value, encrypted_value
+                    FROM cookies
+                    WHERE name IN (
+                        'BDUSS', 'BDUSS_BFESS',
+                        'STOKEN', 'STOKEN_BFESS',
+                        'BAIDUID', 'BAIDUID_BFESS'
+                    )
+                    """
+                ).fetchall()
+            for host_key, name, value, encrypted_value in rows:
+                if "baidu.com" not in str(host_key):
+                    continue
+                cookie_value = decrypt_edge_cookie_value(value, encrypted_value, key)
+                if cookie_value:
+                    cookies.append({"domain": host_key, "name": name, "value": cookie_value})
+        except Exception:
+            continue
+        finally:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+    return cookies
+
+
+def read_edge_profile_credentials() -> Dict[str, str]:
+    user_data_dir, profile_name = get_edge_source_profile_config()
+    if not user_data_dir or not os.path.isdir(user_data_dir):
+        return {}
+    return extract_login_credentials(read_edge_profile_cookies(user_data_dir, profile_name))
+
+
+def get_edge_profile_config() -> Tuple[str, str, bool, str]:
+    if should_use_temp_edge_profile():
+        return tempfile.mkdtemp(prefix="baidu_pan_login_"), "", True, "clean"
+
+    user_data_dir, profile_name = get_edge_source_profile_config()
+    if user_data_dir and os.path.isdir(user_data_dir):
+        if should_use_direct_edge_profile():
+            return user_data_dir, profile_name, False, "direct"
+        try:
+            seeded_dir, copied_count = create_seeded_edge_user_data_dir(user_data_dir, profile_name)
+            if copied_count:
+                return seeded_dir, profile_name, True, "seeded"
+            shutil.rmtree(seeded_dir, ignore_errors=True)
+        except OSError:
+            pass
+        return tempfile.mkdtemp(prefix="baidu_pan_login_"), "", True, "clean"
+
+    return tempfile.mkdtemp(prefix="baidu_pan_login_"), "", True, "clean"
+
+
+def build_edge_login_args(browser: str, port: int, profile_dir: str, profile_name: str) -> List[str]:
+    args = [
+        browser,
+        f"--remote-debugging-address=127.0.0.1",
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={profile_dir}",
+        "--no-first-run",
+        "--disable-default-apps",
+        "--new-window",
+        f"--app={BAIDU_LOGIN_URL}",
+    ]
+    if profile_name:
+        args.insert(4, f"--profile-directory={profile_name}")
+    return args
+
+
+def wait_for_browser_debug(port: int, timeout: int = 30) -> None:
     deadline = time.time() + timeout
     url = f"http://127.0.0.1:{port}/json/version"
     while time.time() < deadline:
@@ -385,6 +621,22 @@ def get_cdp_cookies(port: int) -> List[Dict]:
     return []
 
 
+def open_cdp_url(port: int, url: str) -> None:
+    try:
+        version = requests.get(f"http://127.0.0.1:{port}/json/version", timeout=2).json()
+        browser_ws = version.get("webSocketDebuggerUrl")
+        if browser_ws:
+            cdp_call(browser_ws, "Target.createTarget", {"url": url})
+            return
+    except Exception:
+        pass
+
+    try:
+        requests.put(f"http://127.0.0.1:{port}/json/new?{quote(url, safe='')}", timeout=2)
+    except Exception:
+        pass
+
+
 def choose_cookie_value(cookies: List[Dict], names: Tuple[str, ...]) -> str:
     for name in names:
         for cookie in cookies:
@@ -403,42 +655,86 @@ def extract_login_credentials(cookies: List[Dict]) -> Dict[str, str]:
 
 def wait_for_login_credentials(port: int) -> Dict[str, str]:
     deadline = time.time() + LOGIN_TIMEOUT_SECONDS
+    stoken_deadline = 0.0
+    best_credentials: Dict[str, str] = {}
+    passport_opened = False
     last_error = None
     while time.time() < deadline:
         try:
             credentials = extract_login_credentials(get_cdp_cookies(port))
-            if credentials.get("BDUSS"):
+            if credentials.get("BDUSS") and credentials.get("STOKEN"):
                 return credentials
+            if credentials.get("BDUSS"):
+                best_credentials = credentials
+                if not passport_opened:
+                    open_cdp_url(port, BAIDU_PASSPORT_CENTER_URL)
+                    stoken_deadline = time.time() + LOGIN_STOKEN_GRACE_SECONDS
+                    passport_opened = True
+                elif stoken_deadline and time.time() >= stoken_deadline:
+                    return best_credentials
         except Exception as exc:
             last_error = exc
         time.sleep(LOGIN_POLL_INTERVAL)
 
+    if best_credentials.get("BDUSS"):
+        return best_credentials
     if last_error:
         raise RuntimeError(f"等待网页登录超时: {last_error}")
     raise RuntimeError("等待网页登录超时，未获取到 BDUSS Cookie")
 
 
 def login_with_browser() -> Dict[str, str]:
+    edge_credentials: Dict[str, str] = {}
+    if not should_use_temp_edge_profile():
+        edge_credentials = read_edge_profile_credentials()
+        if edge_credentials.get("BDUSS") and edge_credentials.get("STOKEN"):
+            save_credentials(edge_credentials, require_stoken=True)
+            refresh_global_credentials(edge_credentials)
+            print(f"已从 Edge 百度网盘登录态读取 BDUSS/STOKEN，并保存到 {CREDENTIALS_FILE}")
+            return edge_credentials
+        if edge_credentials.get("BDUSS"):
+            print("已从 Edge 读取到 BDUSS，但没有读取到 STOKEN，正在打开网页登录页补齐...")
+
     browser = find_edge_executable()
     port = find_available_port()
-    profile_dir = tempfile.mkdtemp(prefix="baidu_pan_login_")
+    profile_dir, profile_name, is_temp_profile, profile_mode = get_edge_profile_config()
     process = None
     try:
-        args = [
-            browser,
-            f"--remote-debugging-address=127.0.0.1",
-            f"--remote-debugging-port={port}",
-            f"--user-data-dir={profile_dir}",
-            "--no-first-run",
-            "--disable-default-apps",
-            "--new-window",
-            f"--app={BAIDU_LOGIN_URL}",
-        ]
+        args = build_edge_login_args(browser, port, profile_dir, profile_name)
         process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        wait_for_browser_debug(port)
-        print("请在弹出的 Edge 百度登录窗口完成登录，脚本会自动读取登录态并继续...")
+        try:
+            wait_for_browser_debug(port)
+        except RuntimeError as exc:
+            if profile_mode == "direct":
+                if process and process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                port = find_available_port()
+                profile_dir = tempfile.mkdtemp(prefix="baidu_pan_login_")
+                profile_name = ""
+                is_temp_profile = True
+                profile_mode = "clean"
+                print("Edge 默认配置目录无法开启调试端口，已切换到独立登录窗口。")
+                args = build_edge_login_args(browser, port, profile_dir, profile_name)
+                process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                wait_for_browser_debug(port)
+            else:
+                raise
+        if profile_mode == "seeded":
+            print("已复制 Edge 当前登录态到临时窗口，正在读取百度 Cookie；如果没有自动识别，请在弹出窗口重新登录。")
+        elif profile_mode == "clean":
+            print("请在弹出的 Edge 百度网盘登录窗口完成登录，脚本会自动读取登录态并继续...")
+        else:
+            print(f"正在复用 Edge 配置目录: {profile_dir} ({profile_name})")
+        open_cdp_url(port, BAIDU_PASSPORT_CENTER_URL)
         credentials = wait_for_login_credentials(port)
-        save_credentials(credentials)
+        for key, value in edge_credentials.items():
+            if value and not credentials.get(key):
+                credentials[key] = value
+        save_credentials(credentials, require_stoken=True)
         refresh_global_credentials(credentials)
         print(f"已保存登录态到 {CREDENTIALS_FILE}")
         return credentials
@@ -449,7 +745,8 @@ def login_with_browser() -> Dict[str, str]:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill()
-        shutil.rmtree(profile_dir, ignore_errors=True)
+        if is_temp_profile:
+            shutil.rmtree(profile_dir, ignore_errors=True)
 
 
 def ensure_login_credentials(force_login: bool = False) -> None:
@@ -2496,7 +2793,6 @@ class FletPanDownloaderApp:
         )
 
         PrimaryButton = ft.Button if hasattr(ft, "Button") else ft.ElevatedButton
-        self.login_button = ft.OutlinedButton("登录 / 刷新", icon=ft.Icons.LOGIN, on_click=lambda _e: self.login())
         self.parse_button = PrimaryButton("解析文件", icon=ft.Icons.SEARCH, on_click=lambda _e: self.parse_share())
         self.download_button = PrimaryButton("开始下载", icon=ft.Icons.DOWNLOAD, on_click=lambda _e: self.download(), disabled=True)
         self.pause_button = ft.OutlinedButton("暂停", icon=ft.Icons.PAUSE, on_click=lambda _e: self.pause_download(), disabled=True)
@@ -2563,7 +2859,6 @@ class FletPanDownloaderApp:
                     ),
                     ft.Row(
                         [
-                            self.login_button,
                             self.parse_button,
                             self.download_button,
                             self.pause_button,
@@ -3242,7 +3537,7 @@ class FletPanDownloaderApp:
     def set_busy(self, busy: bool, task_name: Optional[str] = None) -> None:
         self.busy = busy
         self.active_task = task_name if busy else None
-        for control in (self.login_button, self.parse_button):
+        for control in (self.parse_button,):
             control.disabled = busy
         self.share_url_field.disabled = busy
         self.download_root_field.disabled = busy
@@ -3644,18 +3939,16 @@ class BaiduPanDownloaderApp:
             width=6,
             textvariable=self.part_workers_var,
         ).grid(row=0, column=3, sticky="w", padx=(0, 22))
-        self.login_button = ttk.Button(actions, text="登录 / 刷新", style="Ghost.TButton", command=self.login)
-        self.login_button.grid(row=0, column=4, padx=(0, 10))
         self.parse_button = ttk.Button(actions, text="解析文件", style="Primary.TButton", command=self.parse_share)
-        self.parse_button.grid(row=0, column=5, padx=(0, 10))
+        self.parse_button.grid(row=0, column=4, padx=(0, 10))
         self.download_button = ttk.Button(actions, text="开始下载", style="Primary.TButton", command=self.download, state="disabled")
-        self.download_button.grid(row=0, column=6, padx=(0, 10))
+        self.download_button.grid(row=0, column=5, padx=(0, 10))
         self.pause_button = ttk.Button(actions, text="暂停", style="Ghost.TButton", command=self.pause_download, state="disabled")
-        self.pause_button.grid(row=0, column=7, padx=(0, 10))
+        self.pause_button.grid(row=0, column=6, padx=(0, 10))
         self.resume_button = ttk.Button(actions, text="继续", style="Primary.TButton", command=self.resume_download, state="disabled")
-        self.resume_button.grid(row=0, column=8, padx=(0, 10))
+        self.resume_button.grid(row=0, column=7, padx=(0, 10))
         self.reselect_button = ttk.Button(actions, text="重新选择", style="Ghost.TButton", command=self.reselect_download, state="disabled")
-        self.reselect_button.grid(row=0, column=9, padx=(0, 10))
+        self.reselect_button.grid(row=0, column=8, padx=(0, 10))
         ttk.Label(
             panel,
             text="提示：暂停或重新选择会停止当前连接；未完成的 .parts 分片会保留，继续下载会自动续传。",
@@ -3981,7 +4274,6 @@ class BaiduPanDownloaderApp:
         else:
             self.active_task = None
         state = "disabled" if busy else "normal"
-        self.login_button.configure(state=state)
         self.parse_button.configure(state=state)
         self.update_download_button_state()
 

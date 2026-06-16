@@ -51,7 +51,7 @@ py -m pip install -r requirements.txt
 
 脚本需要百度网盘登录态，用于访问分享页面、自动转存文件和调用下载接口。
 
-首次运行如果没有 `credentials.local.json`，脚本会直接调用本机 Microsoft Edge 打开百度登录窗口。你在窗口里完成登录后，脚本会通过浏览器调试接口读取登录 Cookie，保存到 `credentials.local.json`，然后继续解析和下载分享资源。
+首次运行如果没有 `credentials.local.json`，脚本会直接调用本机 Microsoft Edge 打开百度网盘登录窗口。你在窗口里完成登录后，脚本会通过浏览器调试接口读取登录 Cookie，保存到 `credentials.local.json`，然后继续解析和下载分享资源。
 
 后续运行会直接复用本地登录态。如果 Cookie 失效，脚本会重新打开网页登录页刷新登录态。
 
@@ -69,6 +69,20 @@ Copy-Item .\credentials.local.example.json .\credentials.local.json
   "STOKEN": "your_stoken_here"
 }
 ```
+
+### 使用油猴脚本导出 Cookie
+
+如果网页登录自动读取失败，可以用项目里的油猴脚本导出 `BDUSS` 和 `STOKEN`：
+
+1. 安装 Tampermonkey / 篡改猴扩展。
+2. 新建用户脚本，把 `baidu_pan_cookie_exporter.user.js` 的内容复制进去并保存。
+3. 打开 `https://pan.baidu.com/`，确认当前浏览器已经登录百度网盘。
+4. 页面右下角会出现 `Baidu Pan Cookie Exporter` 面板，点击 `Refresh`。
+5. 如果自动读取成功，点击 `Copy JSON` 复制配置内容。
+6. 如果自动读取失败，按面板里的提示从浏览器开发者工具的 Cookies 页面手动复制 `BDUSS` 和 `STOKEN`，再点击导出。
+7. 把复制得到的 JSON 写入程序同目录的 `credentials.local.json`；运行 EXE 时写入 `dist\credentials.local.json`。
+
+油猴脚本只在本地页面读取 Cookie 并生成 JSON，不会上传数据。`BDUSS` 和 `STOKEN` 等同账号登录凭据，不要发给别人，也不要提交到仓库。
 
 或者运行脚本交互式保存：
 
@@ -177,6 +191,7 @@ baidu_pan_downloader.py          主下载脚本
 requirements.txt                 Python 依赖
 credentials.local.example.json   凭据配置示例
 save_credentials.ps1             交互式保存本地凭据
+baidu_pan_cookie_exporter.user.js 油猴脚本，用于导出 BDUSS/STOKEN
 setup_portable_python.ps1        初始化便携 Python 环境
 run_local.ps1                    使用临时环境变量运行脚本
 bin/py.cmd                       本机便携 Python 启动包装
