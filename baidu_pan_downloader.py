@@ -39,9 +39,9 @@ CPU_THREAD_COUNT = max(1, os.cpu_count() or 4)
 MAX_WORKERS = 4
 MAX_FILE_WORKERS = 4
 
-# 单文件内部分段下载线程数，默认使用当前 CPU 逻辑线程数
-DOWNLOAD_PART_WORKERS = CPU_THREAD_COUNT/2
-DOWNLOAD_MAX_PART_WORKERS = CPU_THREAD_COUNT/2
+# 单文件内部分段下载线程数，默认使用当前 CPU 逻辑线程数的一半
+DOWNLOAD_PART_WORKERS = max(1, CPU_THREAD_COUNT // 2)
+DOWNLOAD_MAX_PART_WORKERS = max(1, CPU_THREAD_COUNT // 2)
 DOWNLOAD_PART_SIZE = 256 * 1024 * 1024
 
 # 是否使用进度条（需要安装 tqdm）
@@ -3072,7 +3072,6 @@ class FletPanDownloaderApp:
     def resume_download(self) -> None:
         if self.busy or not self.download_paused:
             return
-        self.download_paused = False
         self.download()
 
     def reset_download_selection(self) -> None:
@@ -3094,12 +3093,13 @@ class FletPanDownloaderApp:
         if not self.files_to_download:
             return
         if self.busy:
-            if self.active_task != "download" or self.cancel_event.is_set():
+            if self.active_task != "download":
                 return
             self.download_stop_reason = "reselect"
-            self.cancel_event.set()
+            if not self.cancel_event.is_set():
+                self.cancel_event.set()
+                self.append_log("[重新选择] 正在停止当前下载，已下载的分片会保留。")
             self.summary_text.value = "正在停止下载，稍后可重新选择"
-            self.append_log("[重新选择] 正在停止当前下载，已下载的分片会保留。")
             self.update_download_button_state()
             self.safe_update()
             return
@@ -3802,7 +3802,6 @@ class BaiduPanDownloaderApp:
             return
         if not self.download_paused:
             return
-        self.download_paused = False
         self.download()
 
     def reset_download_selection(self) -> None:
@@ -3830,12 +3829,13 @@ class BaiduPanDownloaderApp:
         if not self.files_to_download:
             return
         if self.busy:
-            if self.active_task != "download" or self.cancel_event.is_set():
+            if self.active_task != "download":
                 return
             self.download_stop_reason = "reselect"
-            self.cancel_event.set()
+            if not self.cancel_event.is_set():
+                self.cancel_event.set()
+                self.append_log("[重新选择] 正在停止当前下载，已下载的分片会保留。")
             self.summary_var.set("正在停止下载，稍后可重新选择")
-            self.append_log("[重新选择] 正在停止当前下载，已下载的分片会保留。")
             self.update_download_button_state()
             return
 
