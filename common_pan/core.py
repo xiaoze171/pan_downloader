@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import time
+from html import unescape
 from urllib.parse import urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -58,6 +59,13 @@ class DownloadConfig:
     connect_timeout: int = 15
     read_timeout: int = 120
     overwrite: bool = False
+    progress_callback: Optional[Callable[[int, int, float, str], None]] = None
+    cancel_event: Any = None
+    show_progress: bool = True
+
+
+class DownloadCancelled(RuntimeError):
+    pass
 
 
 def add_project_root_to_path(current_file: str) -> None:
@@ -121,7 +129,7 @@ def parse_json_response(response: requests.Response, provider: str) -> Dict[str,
 
 def first_url(value: Any) -> str:
     if isinstance(value, str) and value.startswith(("http://", "https://")):
-        return value
+        return unescape(value.strip())
     if isinstance(value, dict):
         for key in (
             "download_url",
@@ -256,18 +264,21 @@ def download_file_with_resolver(
                 url = resolve_url()
             _download_once(url, target, temp, config, file.size)
             return
+        except DownloadCancelled:
+            raise
         except Exception as exc:
             last_error = exc
             if attempt >= config.retries:
                 break
             print(f"Download failed ({attempt}/{config.retries}), retrying: {exc}")
-            time.sleep(config.retry_delay)
+            _sleep_or_cancel(config, config.retry_delay)
             url = ""
 
     raise RuntimeError(f"Download failed after {config.retries} attempts: {file.path}: {last_error}")
 
 
 def _download_once(url: str, target: str, temp: str, config: DownloadConfig, declared_size: int) -> None:
+    _raise_if_cancelled(config)
     if ".m3u8" in url.lower():
         _download_hls_once(url, target, temp, config)
         return
@@ -319,16 +330,24 @@ def _download_once(url: str, target: str, temp: str, config: DownloadConfig, dec
             raise RuntimeError(f"Download server returned an error document: {error_text}")
 
         total = _response_total_size(response, downloaded, declared_size)
+        initial_downloaded = downloaded
+        start_time = time.monotonic()
         progress = (
             tqdm(total=total, initial=downloaded, unit="B", unit_scale=True, desc=os.path.basename(target))
-            if tqdm
+            if config.show_progress and tqdm
             else None
         )
         try:
             with open(temp, "ab" if downloaded else "wb") as f:
                 for chunk in response.iter_content(chunk_size=config.chunk_size):
+                    _raise_if_cancelled(config)
                     if chunk:
                         f.write(chunk)
+                        downloaded += len(chunk)
+                        if config.progress_callback:
+                            elapsed = max(0.001, time.monotonic() - start_time)
+                            speed = max(0, downloaded - initial_downloaded) / elapsed
+                            config.progress_callback(downloaded, total, speed, "下载中")
                         if progress:
                             progress.update(len(chunk))
         finally:
@@ -341,6 +360,7 @@ def _download_once(url: str, target: str, temp: str, config: DownloadConfig, dec
 
 
 def _download_hls_once(url: str, target: str, temp: str, config: DownloadConfig) -> None:
+    _raise_if_cancelled(config)
     if os.path.exists(temp):
         os.remove(temp)
     headers = {"User-Agent": config.user_agent}
@@ -351,15 +371,17 @@ def _download_hls_once(url: str, target: str, temp: str, config: DownloadConfig)
     session = requests.Session()
     session.trust_env = False
     segments = _load_hls_segments(session, url, headers, None)
-    progress = tqdm(total=len(segments), unit="seg", desc=os.path.basename(target)) if tqdm else None
+    progress = tqdm(total=len(segments), unit="seg", desc=os.path.basename(target)) if config.show_progress and tqdm else None
     try:
         with open(temp, "wb") as f:
             for segment_url in segments:
+                _raise_if_cancelled(config)
                 with session.get(segment_url, headers=headers, stream=True, timeout=(config.connect_timeout, config.read_timeout)) as response:
                     if response.status_code >= 400:
                         error_text = response.text[:500].replace("\r", " ").replace("\n", " ")
                         raise RuntimeError(f"HLS segment returned HTTP {response.status_code}: {error_text}")
                     for chunk in response.iter_content(chunk_size=config.chunk_size):
+                        _raise_if_cancelled(config)
                         if chunk:
                             f.write(chunk)
                 if progress:
@@ -429,3 +451,18 @@ def _looks_like_tiny_placeholder(response: requests.Response, response_size: int
     if content_type.startswith(("image/", "text/", "application/json", "application/xml")):
         return True
     return declared_size // max(response_size, 1) >= 1000
+
+
+def _raise_if_cancelled(config: DownloadConfig) -> None:
+    cancel_event = getattr(config, "cancel_event", None)
+    if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
+        raise DownloadCancelled("Download cancelled")
+
+
+def _sleep_or_cancel(config: DownloadConfig, seconds: float) -> None:
+    cancel_event = getattr(config, "cancel_event", None)
+    if cancel_event is not None and hasattr(cancel_event, "wait"):
+        if cancel_event.wait(max(0.0, seconds)):
+            raise DownloadCancelled("Download cancelled")
+        return
+    time.sleep(seconds)

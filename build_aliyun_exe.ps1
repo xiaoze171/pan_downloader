@@ -52,7 +52,7 @@ $env:MPLCONFIGDIR = Join-Path $BuildPath "mplconfig"
     --noconfirm `
     --clean `
     --onefile `
-    --console `
+    --windowed `
     --name AliyunDriveDownloader `
     --paths "$ProjectRoot" `
     --distpath "$DistPath" `

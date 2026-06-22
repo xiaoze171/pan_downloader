@@ -1,6 +1,7 @@
 from .core import (
     CloudFile,
     DownloadConfig,
+    DownloadCancelled,
     add_project_root_to_path,
     download_file_with_resolver,
     extract_password,

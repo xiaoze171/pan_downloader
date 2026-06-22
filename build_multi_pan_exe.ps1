@@ -92,22 +92,31 @@ $Providers = @(
         Folder = "aliyun_drive"
         Source = "aliyun_drive\aliyun_drive_direct_downloader.py"
         Keys = @("ALIYUN_ACCESS_TOKEN", "ALIYUN_REFRESH_TOKEN", "ALIYUN_DEFAULT_DRIVE_ID")
+        Windowed = $true
     },
     @{
         Name = "XunleiPanDownloader"
         Folder = "xunlei_pan"
         Source = "xunlei_pan\xunlei_pan_direct_downloader.py"
         Keys = @("XUNLEI_COOKIE", "XUNLEI_AUTHORIZATION", "XUNLEI_CAPTCHA_TOKEN", "XUNLEI_CLIENT_ID", "XUNLEI_DEVICE_ID")
+        Windowed = $false
     },
     @{
         Name = "QuarkPanDownloader"
         Folder = "quark_pan"
         Source = "quark_pan\quark_pan_direct_downloader.py"
         Keys = @("QUARK_COOKIE", "QUARK_TO_PDIR_FID")
+        Windowed = $true
     }
 )
 
 foreach ($Provider in $Providers) {
+    $SourcePath = Join-Path $ProjectRoot $Provider.Source
+    if (-not (Test-Path -LiteralPath $SourcePath)) {
+        Write-Warning "Skipping missing provider source: $SourcePath"
+        continue
+    }
+
     $BuildPath = Join-Path $ProjectRoot ".build_deps\$($Provider.Name)"
     $SpecPath = Join-Path $BuildPath "spec"
     $DistPath = Join-Path $ProjectRoot "dist\$($Provider.Folder)"
@@ -140,7 +149,6 @@ foreach ($Provider in $Providers) {
         "--noconfirm",
         "--clean",
         "--onefile",
-        "--console",
         "--name",
         $Provider.Name,
         "--paths",
@@ -152,6 +160,11 @@ foreach ($Provider in $Providers) {
         "--specpath",
         $SpecPath
     )
+    if ($Provider.Windowed) {
+        $PyInstallerArgs += "--windowed"
+    } else {
+        $PyInstallerArgs += "--console"
+    }
     foreach ($Module in $ExcludeModules) {
         $PyInstallerArgs += @("--exclude-module", $Module)
     }

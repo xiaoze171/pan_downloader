@@ -108,6 +108,15 @@ def main() -> int:
     cases = read_test_cases(args.data)
     if args.provider != "all":
         cases = [case for case in cases if case.provider == args.provider]
+    missing = [case for case in cases if not os.path.exists(case.script)]
+    if missing and args.provider == "all":
+        for case in missing:
+            print(f"Skipping {case.provider}: script not found: {case.script}", flush=True)
+        cases = [case for case in cases if os.path.exists(case.script)]
+    elif missing:
+        for case in missing:
+            print(f"Script not found for {case.provider}: {case.script}", flush=True)
+        return 1
     if not cases:
         print("No matching test cases.")
         return 1

@@ -27,6 +27,7 @@ from common_pan import (  # noqa: E402
     run_jobs,
     selected_files,
 )
+from common_pan.tk_gui import ProviderDownloadSession, ProviderGuiConfig, launch_tk_gui  # noqa: E402
 
 
 def get_app_dir() -> str:
@@ -308,6 +309,8 @@ def first_list_item(value: Any, keys: Tuple[str, ...]) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Quark Pan share direct-link downloader.")
     parser.add_argument("share", nargs="?", help="Share link or copied share text.")
+    parser.add_argument("--gui", action="store_true", help="Launch the desktop downloader UI.")
+    parser.add_argument("--cli", action="store_true", help="Force command-line mode when running a packaged exe.")
     parser.add_argument("--pwd", default="", help="Share password, if the link text does not contain it.")
     parser.add_argument("--out", default=DEFAULT_DOWNLOAD_DIR, help="Download directory.")
     parser.add_argument("--select", default="all", help="File indexes to process, for example: all, 1, 1,3-5.")
@@ -331,6 +334,67 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not save shared files first; only try Quark share direct-link APIs.",
     )
     return parser
+
+
+def create_gui_session(share_text: str) -> ProviderDownloadSession:
+    pwd_id, passcode = parse_share(share_text)
+    credentials = load_credentials(CREDENTIALS_FILE, ("QUARK_COOKIE", "QUARK_TO_PDIR_FID"), {"QUARK_TO_PDIR_FID": "0"})
+    client = QuarkPanClient(credentials)
+    stoken = client.get_share_token(pwd_id, passcode)
+    files = client.list_files(pwd_id, stoken)
+
+    def resolve(file: CloudFile) -> str:
+        return client.get_download_url(pwd_id, stoken, file, save_first=True)
+
+    return ProviderDownloadSession(
+        files=files,
+        resolve_url=resolve,
+        user_agent=USER_AGENT,
+        referer="https://pan.quark.cn/",
+        extra_headers={"Cookie": client.session.headers.get("Cookie", "")},
+        folder_count=-1,
+        serialize_resolve=True,
+    )
+
+
+def gui_credential_messages() -> List[str]:
+    try:
+        credentials = load_credentials(CREDENTIALS_FILE, ("QUARK_COOKIE", "QUARK_TO_PDIR_FID"), {"QUARK_TO_PDIR_FID": "0"})
+    except Exception as exc:
+        return [f"读取失败: {exc}"]
+    messages = []
+    if credentials.get("QUARK_COOKIE"):
+        messages.append("已读取 QUARK_COOKIE。")
+    else:
+        messages.append("未读取到 QUARK_COOKIE，解析或保存到自己网盘可能会失败。")
+    messages.append(f"保存到自己网盘目录 FID: {credentials.get('QUARK_TO_PDIR_FID', '0') or '0'}")
+    return messages
+
+
+def build_gui_config() -> ProviderGuiConfig:
+    return ProviderGuiConfig(
+        title="轻云链 - 夸克网盘",
+        provider_name="夸克网盘",
+        default_download_dir=DEFAULT_DOWNLOAD_DIR,
+        credentials_file=CREDENTIALS_FILE,
+        create_session=create_gui_session,
+        credential_messages=gui_credential_messages,
+        share_hint="粘贴夸克网盘分享链接或完整分享文本",
+        default_file_workers=2,
+        max_file_workers=4,
+        default_retries=5,
+        max_retries=10,
+    )
+
+
+def launch_gui() -> None:
+    launch_tk_gui(build_gui_config())
+
+
+def should_launch_gui(argv: List[str]) -> bool:
+    if "--cli" in argv:
+        return False
+    return "--gui" in argv or bool(getattr(sys, "frozen", False) and len(argv) <= 1)
 
 
 def prompt_for_missing_share(args: argparse.Namespace) -> None:
@@ -365,6 +429,9 @@ def pause(message: str) -> None:
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.gui:
+        launch_gui()
+        return
     prompt_for_missing_share(args)
     pwd_id, passcode = parse_share(args.share, args.pwd)
     credentials = load_credentials(CREDENTIALS_FILE, ("QUARK_COOKIE", "QUARK_TO_PDIR_FID"), {"QUARK_TO_PDIR_FID": "0"})
@@ -407,6 +474,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    if should_launch_gui(sys.argv):
+        launch_gui()
+        sys.exit(0)
     pause_on_exit = bool(getattr(sys, "frozen", False) and len(sys.argv) <= 1)
     try:
         main()
