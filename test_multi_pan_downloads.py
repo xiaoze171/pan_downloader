@@ -8,7 +8,7 @@ from typing import Dict, List
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DATA_FILE = os.path.join(ROOT_DIR, "测试数据以及对应配置")
+DEFAULT_DATA_FILE = os.path.join(ROOT_DIR, "share_links.local.txt")
 DEFAULT_OUTPUT_DIR = os.path.join("D:\\", "pan_downloader_test_download")
 
 
@@ -26,6 +26,7 @@ class TestCase:
 
 
 PROVIDER_SCRIPTS: Dict[str, str] = {
+    "baidu": os.path.join(ROOT_DIR, "baidu_pan", "baidu_pan_downloader.py"),
     "aliyun": os.path.join(ROOT_DIR, "aliyun_drive", "aliyun_drive_direct_downloader.py"),
     "xunlei": os.path.join(ROOT_DIR, "xunlei_pan", "xunlei_pan_direct_downloader.py"),
     "quark": os.path.join(ROOT_DIR, "quark_pan", "quark_pan_direct_downloader.py"),
@@ -33,6 +34,8 @@ PROVIDER_SCRIPTS: Dict[str, str] = {
 
 
 def detect_provider(link: str) -> str:
+    if "pan.baidu.com/s/" in link:
+        return "baidu"
     if re.search(r"(?:aliyundrive|alipan)\.com/s/", link):
         return "aliyun"
     if "pan.xunlei.com/s/" in link:
@@ -87,10 +90,10 @@ def run_case(args: argparse.Namespace, case: TestCase) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run Aliyun/Xunlei/Quark test links with their standalone scripts.")
+    parser = argparse.ArgumentParser(description="Run Baidu/Aliyun/Xunlei/Quark test links with their standalone scripts.")
     parser.add_argument("--data", default=DEFAULT_DATA_FILE, help="Text file containing one share link per line.")
     parser.add_argument("--mode", choices=("list", "links", "download"), default="links", help="Test mode.")
-    parser.add_argument("--provider", choices=("all", "aliyun", "xunlei", "quark"), default="all", help="Run only one provider.")
+    parser.add_argument("--provider", choices=("all", "baidu", "aliyun", "xunlei", "quark"), default="all", help="Run only one provider.")
     parser.add_argument("--select", default="1", help="File indexes passed to provider scripts. Default downloads/resolves the first file.")
     parser.add_argument("--out", default=DEFAULT_OUTPUT_DIR, help="Root output directory for download mode.")
     parser.add_argument("--retries", type=int, default=3, help="Download retry count.")

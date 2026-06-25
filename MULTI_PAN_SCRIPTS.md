@@ -1,11 +1,10 @@
 # Multi Pan Direct Download Scripts
 
-This document covers the standalone scripts for Aliyun Drive, Xunlei Pan, and Quark Pan.
-The Baidu downloader is not changed.
+This document covers the standalone scripts for Baidu Pan, Aliyun Drive, Xunlei Pan, and Quark Pan.
 
 ## Shared Behavior
 
-The three new scripts keep separate provider-specific folders, but share the common code in `common_pan/`.
+The provider scripts keep separate provider-specific folders, and non-Baidu providers share the common code in `common_pan/`.
 Common behavior includes:
 
 - Recursive share file listing.
@@ -30,6 +29,7 @@ Copy it to `credentials.local.json` in the same folder and fill the required val
 You can use the matching Tampermonkey userscript to export the JSON:
 
 - `aliyun_drive/aliyun_drive_token_exporter.user.js`
+- `baidu_pan/baidu_pan_cookie_exporter.user.js`
 - `xunlei_pan/xunlei_pan_token_exporter.user.js`
 - `quark_pan/quark_pan_token_exporter.user.js`
 
@@ -113,21 +113,21 @@ Aliyun fallback when direct share download is blocked:
 .\bin\py.cmd .\aliyun_drive\aliyun_drive_direct_downloader.py "share text" --pwd abcd --download --save-first
 ```
 
-## Test Script
+## Test Runner
 
-The repository has a test runner that reads links from `测试数据以及对应配置`.
+The repository has a Python test runner. Pass a text file containing one share link per line with `--data`.
 
 List files:
 
 ```powershell
-.\测试下载脚本.ps1 -Mode list -KeepGoing
+.\bin\py.cmd .\test_multi_pan_downloads.py --data .\share_links.local.txt --mode list --keep-going
 ```
 
 Download the first small file. Quark always saves to your own cloud first:
 
 ```powershell
-.\测试下载脚本.ps1 -Mode download -Provider aliyun -Select 1 -SaveFirst -Overwrite
-.\测试下载脚本.ps1 -Mode download -Provider quark -Select 1 -SaveFirst -Overwrite
+.\bin\py.cmd .\test_multi_pan_downloads.py --data .\share_links.local.txt --mode download --provider aliyun --select 1 --save-first --overwrite
+.\bin\py.cmd .\test_multi_pan_downloads.py --data .\share_links.local.txt --mode download --provider quark --select 1 --save-first --overwrite
 ```
 
 Default test download output:

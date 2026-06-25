@@ -18,7 +18,7 @@ function Convert-SecureStringToPlainText {
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PortablePythonExe = Join-Path $ProjectRoot "python\python.exe"
 $LocalPythonExe = "D:\app\conda\python.exe"
-$ScriptPath = Join-Path $ProjectRoot "baidu_pan_downloader.py"
+$ScriptPath = Join-Path $ProjectRoot "baidu_pan\baidu_pan_downloader.py"
 
 if (Test-Path $PortablePythonExe) {
     $PythonExe = $PortablePythonExe

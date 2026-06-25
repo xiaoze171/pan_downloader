@@ -16,7 +16,9 @@ function Convert-SecureStringToPlainText {
 }
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$CredentialsPath = Join-Path $ProjectRoot "credentials.local.json"
+$CredentialsPath = Join-Path $ProjectRoot "baidu_pan\credentials.local.json"
+
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $CredentialsPath) | Out-Null
 
 $bdussSecure = Read-Host "BAIDU_BDUSS" -AsSecureString
 $stokenSecure = Read-Host "BAIDU_STOKEN" -AsSecureString

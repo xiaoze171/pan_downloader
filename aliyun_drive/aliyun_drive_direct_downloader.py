@@ -28,7 +28,8 @@ from common_pan import (  # noqa: E402
     run_jobs,
     selected_files,
 )
-from common_pan.tk_gui import ProviderDownloadSession, ProviderGuiConfig, launch_tk_gui  # noqa: E402
+from common_pan.tk_gui import ProviderDownloadSession, ProviderGuiConfig  # noqa: E402
+from aliyun_drive.flet_gui import launch_flet_gui  # noqa: E402
 
 
 def get_app_dir() -> str:
@@ -587,7 +588,7 @@ def build_gui_config() -> ProviderGuiConfig:
 
 
 def launch_gui() -> None:
-    launch_tk_gui(build_gui_config())
+    launch_flet_gui(build_gui_config())
 
 
 def should_launch_gui(argv: List[str]) -> bool:
